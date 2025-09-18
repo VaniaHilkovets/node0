@@ -58,7 +58,12 @@ start_node0() {
     pkill -f "start_server.sh" 2>/dev/null
     
     cd "$NODE0_DIR"
-    tmux new-session -d -s node0 "./start_server.sh"
+    tmux new-session -d -s node0 "bash -lc '
+        cd \"$NODE0_DIR\"
+        eval \"\$($HOME/miniconda3/bin/conda shell.bash hook)\"
+        conda activate $CONDA_ENV
+        ./start_server.sh
+    '"
     echo -e "${GREEN}✅ Запущено!${NC}"
     sleep 2
 }
