@@ -1,20 +1,20 @@
 #!/bin/bash
 
-# Node0 Manager Script
-# Управление установкой, запуском и удалением Node0
+# Node0 Simple Manager
+# Упрощенная версия менеджера
 
-# Цвета для красивого вывода
+# Цвета
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Путь к Node0
+# Пути
 NODE0_DIR="$HOME/node0"
 CONDA_ENV="node0"
 
-# Функция для отображения логотипа
+# Логотип
 show_logo() {
     clear
     echo -e "${BLUE}"
@@ -25,361 +25,183 @@ show_logo() {
     echo -e "${NC}"
 }
 
-# Функция проверки статуса
-check_status() {
-    echo -e "\n${YELLOW}📊 Проверка статуса...${NC}"
-    
-    # Проверка установки conda
-    if command -v conda &> /dev/null; then
-        echo -e "${GREEN}✓ Conda установлена${NC}"
-    else
-        echo -e "${RED}✗ Conda не установлена${NC}"
-    fi
-    
-    # Проверка окружения
-    if conda env list | grep -q "$CONDA_ENV"; then
-        echo -e "${GREEN}✓ Окружение node0 существует${NC}"
-    else
-        echo -e "${RED}✗ Окружение node0 не найдено${NC}"
-    fi
-    
-    # Проверка директории
-    if [ -d "$NODE0_DIR" ]; then
-        echo -e "${GREEN}✓ Директория node0 существует${NC}"
-    else
-        echo -e "${RED}✗ Директория node0 не найдена${NC}"
-    fi
-    
-    # Проверка процесса
-    if pgrep -f "node0" > /dev/null; then
-        echo -e "${GREEN}✓ Node0 запущена${NC}"
-        echo "PID процессов: $(pgrep -f "node0" | tr '\n' ' ')"
-    else
-        echo -e "${RED}✗ Node0 не запущена${NC}"
-    fi
-    
-    # Проверка GPU
-    if command -v nvidia-smi &> /dev/null; then
-        echo -e "${GREEN}✓ NVIDIA драйвер установлен${NC}"
-        nvidia-smi --query-gpu=name,memory.total,memory.used --format=csv,noheader
-    else
-        echo -e "${RED}✗ NVIDIA драйвер не найден${NC}"
-    fi
-    
-    echo -e "\nНажмите Enter для продолжения..."
-    read
-}
-
-# Функция установки
+# Установка
 install_node0() {
     show_logo
     echo -e "${YELLOW}🚀 Установка Node0${NC}\n"
     
-    # Проверка требований
-    echo "Проверка системных требований..."
-    
     # Проверка GPU
     if ! command -v nvidia-smi &> /dev/null; then
         echo -e "${RED}Ошибка: NVIDIA драйвер не установлен!${NC}"
-        echo "Установите драйвер командой: sudo apt install nvidia-driver-525"
+        echo "Установите драйвер: sudo apt install nvidia-driver-525"
+        read -p "Нажмите Enter..."
         return 1
     fi
     
-    # Установка зависимостей
-    echo -e "\n${YELLOW}1. Установка системных зависимостей...${NC}"
+    echo "Установка займет 5-10 минут..."
+    
+    # Системные зависимости
+    echo -e "\n${YELLOW}1. Установка зависимостей...${NC}"
     sudo apt update && sudo apt install -y git curl wget build-essential tmux lsof
     
-    # Установка Miniconda если нет
+    # Miniconda
     if ! command -v conda &> /dev/null; then
         echo -e "\n${YELLOW}2. Установка Miniconda...${NC}"
-        wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+        wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
         bash Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda3
         echo 'export PATH="$HOME/miniconda3/bin:$PATH"' >> ~/.bashrc
         export PATH="$HOME/miniconda3/bin:$PATH"
         rm Miniconda3-latest-Linux-x86_64.sh
-    else
-        echo -e "\n${GREEN}2. Miniconda уже установлена${NC}"
     fi
     
-    # Клонирование репозитория
-    echo -e "\n${YELLOW}3. Клонирование репозитория...${NC}"
-    if [ -d "$NODE0_DIR" ]; then
-        echo "Директория уже существует. Обновляем..."
-        cd "$NODE0_DIR" && git pull
-    else
-        git clone https://github.com/PluralisResearch/node0 "$NODE0_DIR"
-    fi
-    
+    # Клонирование
+    echo -e "\n${YELLOW}3. Загрузка Node0...${NC}"
+    [ -d "$NODE0_DIR" ] && rm -rf "$NODE0_DIR"
+    git clone https://github.com/PluralisResearch/node0 "$NODE0_DIR"
     cd "$NODE0_DIR"
     
-    # Создание окружения
-    echo -e "\n${YELLOW}4. Создание Python окружения...${NC}"
+    # Python окружение
+    echo -e "\n${YELLOW}4. Установка Python пакетов...${NC}"
     conda create -n $CONDA_ENV python=3.11 -y
-    
-    # Установка Node0
-    echo -e "\n${YELLOW}5. Установка Node0...${NC}"
     source ~/miniconda3/bin/activate $CONDA_ENV
     pip install .
     
-    # Открытие порта
-    echo -e "\n${YELLOW}6. Настройка файрвола...${NC}"
-    sudo ufw allow 49200/tcp
-    sudo ufw reload
+    # Порт
+    echo -e "\n${YELLOW}5. Открытие порта...${NC}"
+    sudo ufw allow 49200/tcp && sudo ufw reload
     
-    # Генерация скрипта
-    echo -e "\n${YELLOW}7. Генерация скрипта запуска...${NC}"
-    echo -e "${RED}Вам понадобится токен HuggingFace!${NC}"
-    echo "Получите его здесь: https://huggingface.co/settings/tokens"
-    echo -e "\nНажмите Enter когда будете готовы..."
-    read
+    # Токен
+    echo -e "\n${YELLOW}6. Настройка токена...${NC}"
+    echo -e "${RED}Нужен токен HuggingFace!${NC}"
+    echo "Получите здесь: https://huggingface.co/settings/tokens"
+    read -p "Нажмите Enter когда готовы..."
     
     python3 generate_script.py
     
     echo -e "\n${GREEN}✅ Установка завершена!${NC}"
-    echo "Нажмите Enter для возврата в меню..."
-    read
+    read -p "Нажмите Enter..."
 }
 
-# Функция запуска
+# Запуск
 start_node0() {
     show_logo
     echo -e "${YELLOW}▶️  Запуск Node0${NC}\n"
     
-    # Проверка установки
-    if [ ! -d "$NODE0_DIR" ] || [ ! -f "$NODE0_DIR/start_server.sh" ]; then
-        echo -e "${RED}Ошибка: Node0 не установлена!${NC}"
-        echo "Сначала выполните установку (пункт 1)"
-        echo -e "\nНажмите Enter для продолжения..."
-        read
+    if [ ! -f "$NODE0_DIR/start_server.sh" ]; then
+        echo -e "${RED}Node0 не установлена! Сначала установите (пункт 1)${NC}"
+        read -p "Нажмите Enter..."
         return 1
     fi
     
-    # Проверка запущенного процесса
+    # Проверка запущенной
     if pgrep -f "node0" > /dev/null; then
         echo -e "${YELLOW}Node0 уже запущена!${NC}"
-        echo "PID: $(pgrep -f "node0" | tr '\n' ' ')"
-        echo -e "\nОстановить и запустить заново? (y/n): "
-        read answer
+        read -p "Остановить и запустить заново? (y/n): " answer
         if [ "$answer" = "y" ]; then
-            stop_node0_process
+            pkill -f "node0"
+            sleep 2
         else
             return 0
         fi
     fi
     
     cd "$NODE0_DIR"
+    echo -e "${YELLOW}Запуск в фоне...${NC}"
+    tmux new-session -d -s node0 "./start_server.sh"
     
-    echo "Выберите способ запуска:"
-    echo "1) В фоне через tmux (рекомендуется)"
-    echo "2) В текущем терминале"
-    echo "3) С автоматическим перезапуском при ошибке"
-    echo -e "\nВаш выбор: "
-    read choice
-    
-    case $choice in
-        1)
-            echo -e "\n${YELLOW}Запуск в tmux...${NC}"
-            tmux new-session -d -s node0 "cd $NODE0_DIR && ./start_server.sh"
-            echo -e "${GREEN}✅ Node0 запущена в tmux сессии 'node0'${NC}"
-            echo "Команды:"
-            echo "  Подключиться: tmux attach -t node0"
-            echo "  Отключиться: Ctrl+B, затем D"
-            echo "  Логи: tail -f $NODE0_DIR/logs/server.log"
-            ;;
-        2)
-            echo -e "\n${YELLOW}Запуск в текущем терминале...${NC}"
-            ./start_server.sh
-            ;;
-        3)
-            echo -e "\n${YELLOW}Запуск с автоперезапуском...${NC}"
-            cat > auto_restart.sh << 'EOF'
-#!/bin/bash
-while true; do
-    echo "Запуск Node0: $(date)"
-    ./start_server.sh
-    if [ $? -eq 0 ]; then
-        echo "Node0 завершилась нормально"
-        break
-    fi
-    echo "Ошибка! Перезапуск через 5 минут..."
-    sleep 300
-done
-EOF
-            chmod +x auto_restart.sh
-            tmux new-session -d -s node0 "cd $NODE0_DIR && ./auto_restart.sh"
-            echo -e "${GREEN}✅ Node0 запущена с автоперезапуском${NC}"
-            ;;
-    esac
-    
-    echo -e "\nНажмите Enter для возврата в меню..."
-    read
+    echo -e "\n${GREEN}✅ Node0 запущена!${NC}"
+    echo "Команды:"
+    echo "  Подключиться к сессии: tmux attach -t node0"
+    echo "  Отключиться: Ctrl+B, затем D"
+    echo "  Проверить логи: пункт 3 в меню"
+    read -p "Нажмите Enter..."
 }
 
-# Функция остановки процесса
-stop_node0_process() {
-    echo -e "${YELLOW}Остановка Node0...${NC}"
-    
-    # Остановка tmux сессии
-    tmux kill-session -t node0 2>/dev/null
-    
-    # Убиваем процессы
-    pkill -f "node0" 2>/dev/null
-    
-    # Очистка
-    rm -f /tmp/hivemind* 2>/dev/null
-    
-    # Освобождение портов
-    for i in $(lsof -t -i tcp:49200 2>/dev/null); do
-        kill -9 $i 2>/dev/null
-    done
-    
-    # Освобождение GPU
-    for i in $(lsof /dev/nvidia* 2>/dev/null | grep python | awk '{print $2}' | sort -u); do
-        kill -9 $i 2>/dev/null
-    done
-    
-    echo -e "${GREEN}✅ Node0 остановлена${NC}"
-}
-
-# Функция остановки
-stop_node0() {
-    show_logo
-    echo -e "${YELLOW}⏹️  Остановка Node0${NC}\n"
-    
-    if pgrep -f "node0" > /dev/null; then
-        stop_node0_process
-    else
-        echo -e "${YELLOW}Node0 не запущена${NC}"
-    fi
-    
-    echo -e "\nНажмите Enter для возврата в меню..."
-    read
-}
-
-# Функция удаления
-remove_node0() {
-    show_logo
-    echo -e "${RED}🗑️  Удаление Node0${NC}\n"
-    
-    echo -e "${RED}ВНИМАНИЕ! Это действие удалит:${NC}"
-    echo "- Директорию $NODE0_DIR"
-    echo "- Conda окружение $CONDA_ENV"
-    echo "- Все логи и данные"
-    echo -e "\n${YELLOW}Важно: файл private.key будет сохранен в ~/node0_backup/${NC}"
-    echo -e "\nВы уверены? (введите 'YES' для подтверждения): "
-    read confirm
-    
-    if [ "$confirm" != "YES" ]; then
-        echo "Отменено"
-        echo -e "\nНажмите Enter для возврата в меню..."
-        read
-        return 0
-    fi
-    
-    # Остановка если запущена
-    if pgrep -f "node0" > /dev/null; then
-        echo -e "\n${YELLOW}Остановка процессов...${NC}"
-        stop_node0_process
-    fi
-    
-    # Сохранение private.key
-    if [ -f "$NODE0_DIR/private.key" ]; then
-        echo -e "\n${YELLOW}Сохранение private.key...${NC}"
-        mkdir -p ~/node0_backup
-        cp "$NODE0_DIR/private.key" ~/node0_backup/private.key.$(date +%Y%m%d_%H%M%S)
-        echo -e "${GREEN}✓ private.key сохранен в ~/node0_backup/${NC}"
-    fi
-    
-    # Удаление директории
-    echo -e "\n${YELLOW}Удаление файлов...${NC}"
-    rm -rf "$NODE0_DIR"
-    
-    # Удаление conda окружения
-    echo -e "\n${YELLOW}Удаление conda окружения...${NC}"
-    conda remove -n $CONDA_ENV --all -y 2>/dev/null
-    
-    echo -e "\n${GREEN}✅ Node0 удалена${NC}"
-    echo -e "\nНажмите Enter для возврата в меню..."
-    read
-}
-
-# Функция просмотра логов
+# Логи
 view_logs() {
     show_logo
-    echo -e "${YELLOW}📋 Просмотр логов${NC}\n"
+    echo -e "${YELLOW}📋 Логи Node0${NC}\n"
     
     if [ ! -f "$NODE0_DIR/logs/server.log" ]; then
         echo -e "${RED}Логи не найдены!${NC}"
-        echo "Node0 должна быть запущена хотя бы раз"
-        echo -e "\nНажмите Enter для возврата в меню..."
-        read
+        read -p "Нажмите Enter..."
         return 1
     fi
     
     echo "1) Последние 50 строк"
-    echo "2) Следить за логами в реальном времени"
-    echo "3) Поиск ошибок"
-    echo "4) Полный лог"
-    echo -e "\nВыбор: "
-    read choice
+    echo "2) Следить в реальном времени"
+    echo "3) Только ошибки"
+    read -p "Выбор: " choice
     
     case $choice in
-        1)
-            tail -n 50 "$NODE0_DIR/logs/server.log"
-            ;;
-        2)
-            echo -e "${YELLOW}Следим за логами (Ctrl+C для выхода)...${NC}\n"
+        1) tail -n 50 "$NODE0_DIR/logs/server.log" ;;
+        2) 
+            echo -e "\n${YELLOW}Логи в реальном времени (Ctrl+C для выхода):${NC}\n"
             tail -f "$NODE0_DIR/logs/server.log"
             ;;
-        3)
-            echo -e "${YELLOW}Ошибки в логах:${NC}\n"
-            grep -i "error\|fail\|exception" "$NODE0_DIR/logs/server.log" | tail -20
-            ;;
-        4)
-            less "$NODE0_DIR/logs/server.log"
-            ;;
+        3) grep -i "error\|fail" "$NODE0_DIR/logs/server.log" | tail -20 ;;
     esac
     
-    echo -e "\nНажмите Enter для возврата в меню..."
-    read
+    read -p "Нажмите Enter..."
+}
+
+# Удаление
+remove_node0() {
+    show_logo
+    echo -e "${RED}🗑️  Удаление Node0${NC}\n"
+    
+    echo -e "${RED}Будет удалено всё, кроме private.key${NC}"
+    read -p "Введите YES для подтверждения: " confirm
+    
+    if [ "$confirm" != "YES" ]; then
+        echo "Отменено"
+        read -p "Нажмите Enter..."
+        return 0
+    fi
+    
+    # Остановка
+    pkill -f "node0" 2>/dev/null
+    tmux kill-session -t node0 2>/dev/null
+    
+    # Сохранение ключа
+    if [ -f "$NODE0_DIR/private.key" ]; then
+        mkdir -p ~/node0_backup
+        cp "$NODE0_DIR/private.key" ~/node0_backup/private.key.$(date +%Y%m%d_%H%M%S)
+        echo -e "${GREEN}private.key сохранен в ~/node0_backup/${NC}"
+    fi
+    
+    # Удаление
+    rm -rf "$NODE0_DIR"
+    conda remove -n $CONDA_ENV --all -y 2>/dev/null
+    
+    echo -e "\n${GREEN}✅ Node0 удалена${NC}"
+    read -p "Нажмите Enter..."
 }
 
 # Главное меню
-main_menu() {
-    while true; do
-        show_logo
-        
-        echo "Выберите действие:"
-        echo ""
-        echo "  1) 📦 Установить Node0"
-        echo "  2) ▶️  Запустить Node0"
-        echo "  3) ⏹️  Остановить Node0"
-        echo "  4) 📊 Проверить статус"
-        echo "  5) 📋 Просмотреть логи"
-        echo "  6) 🗑️  Удалить Node0"
-        echo "  0) 🚪 Выход"
-        echo ""
-        echo -n "Ваш выбор: "
-        read choice
-        
-        case $choice in
-            1) install_node0 ;;
-            2) start_node0 ;;
-            3) stop_node0 ;;
-            4) check_status ;;
-            5) view_logs ;;
-            6) remove_node0 ;;
-            0) 
-                echo -e "\n${GREEN}До свидания!${NC}"
-                exit 0
-                ;;
-            *)
-                echo -e "\n${RED}Неверный выбор!${NC}"
-                sleep 1
-                ;;
-        esac
-    done
-}
-
-# Запуск
-main_menu
+while true; do
+    show_logo
+    
+    # Быстрый статус
+    if pgrep -f "node0" > /dev/null; then
+        echo -e "Статус: ${GREEN}● Запущена${NC}\n"
+    else
+        echo -e "Статус: ${RED}● Остановлена${NC}\n"
+    fi
+    
+    echo "  1) 📦 Установить Node0"
+    echo "  2) ▶️  Запустить Node0"
+    echo "  3) 📋 Просмотреть логи"
+    echo "  4) 🗑️  Удалить Node0"
+    echo "  0) 🚪 Выход"
+    echo ""
+    read -p "Выбор: " choice
+    
+    case $choice in
+        1) install_node0 ;;
+        2) start_node0 ;;
+        3) view_logs ;;
+        4) remove_node0 ;;
+        0) exit 0 ;;
+    esac
+done
