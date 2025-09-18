@@ -92,16 +92,12 @@ start_node0() {
         return 1
     fi
     
-    # Проверка запущенной
+    # Автоматически убиваем старые процессы
     if pgrep -f "node0" > /dev/null; then
-        echo -e "${YELLOW}Node0 уже запущена!${NC}"
-        read -p "Остановить и запустить заново? (y/n): " answer
-        if [ "$answer" = "y" ]; then
-            pkill -f "node0"
-            sleep 2
-        else
-            return 0
-        fi
+        echo -e "${YELLOW}Остановка предыдущего процесса...${NC}"
+        pkill -f "node0" 2>/dev/null
+        tmux kill-session -t node0 2>/dev/null
+        sleep 2
     fi
     
     cd "$NODE0_DIR"
