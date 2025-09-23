@@ -178,9 +178,12 @@ install_node0() {
 #!/bin/bash
 set -e
 echo "=== Запуск Node0 Pluralis ==="
+export PATH="$HOME/miniconda3/bin:$PATH"
 source ~/miniconda3/bin/activate node0
 echo "Python version: $(python --version)"
 echo "Python path: $(which python)"
+echo "Conda environment: $CONDA_DEFAULT_ENV"
+echo "=== Старт сервера ==="
 EOF
             # Добавляем оригинальное содержимое без первых строк активации
             tail -n +4 start_server.sh.backup >> start_server.sh
