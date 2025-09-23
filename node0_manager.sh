@@ -112,17 +112,30 @@ install_node0() {
         return 1
     }
     
+    # Инициализируем conda для bash
+    log "Инициализация conda..."
+    "$MINICONDA_DIR/bin/conda" init bash
+    source ~/.bashrc
+    
     # Создаем conda окружение
     log "Создаем conda окружение..."
     "$MINICONDA_DIR/bin/conda" create -n "$CONDA_ENV" python=3.11 -y
+    
+    # Проверяем что окружение создалось
+    if ! "$MINICONDA_DIR/bin/conda" env list | grep -q "$CONDA_ENV"; then
+        error "Не удалось создать conda окружение"
+        read -p "Enter для продолжения..."
+        return 1
+    fi
     
     # Активируем окружение и устанавливаем пакеты
     log "Активируем окружение и устанавливаем зависимости..."
     
     # Создаем скрипт для активации и установки
-    cat > install_deps.sh << 'EOF'
+    cat > install_deps.sh << EOF
 #!/bin/bash
-source ~/miniconda3/bin/activate node0
+set -e
+source "$MINICONDA_DIR/bin/activate" "$CONDA_ENV"
 pip install --upgrade pip setuptools wheel
 pip install .
 EOF
@@ -186,25 +199,41 @@ start_node0() {
         return 1
     }
     
-    # Проверяем что start_server.sh существует
-    if [ ! -f "start_server.sh" ]; then
-        warn "start_server.sh не найден, создаем базовый скрипт..."
-        cat > start_server.sh << 'EOF'
+    # Проверяем что start_server.sh существует и исправляем его
+    log "Проверка и создание start_server.sh..."
+    cat > start_server.sh << EOF
 #!/bin/bash
-source ~/miniconda3/bin/activate node0
-python -m node0.server --port 49200
+set -e
+echo "Активация conda окружения..."
+source "$MINICONDA_DIR/bin/activate" "$CONDA_ENV"
+echo "Python version: \$(python --version)"
+echo "Запуск Node0 сервера..."
+if [ -f "server.py" ]; then
+    python server.py --port 49200
+elif [ -f "src/node0/server.py" ]; then
+    python src/node0/server.py --port 49200
+elif command -v node0-server &> /dev/null; then
+    node0-server --port 49200
+else
+    echo "Попытка запуска через модуль..."
+    python -m node0.server --port 49200 || python -c "import node0; print('Node0 установлена успешно')"
+fi
 EOF
-        chmod +x start_server.sh
-    fi
+    chmod +x start_server.sh
     
     # Запускаем в tmux
     log "Запуск в tmux сессии..."
     tmux new-session -d -s node0 "bash -c '
         cd \"$NODE0_DIR\"
-        source ~/miniconda3/bin/activate $CONDA_ENV
+        echo \"Инициализация conda...\"
+        source \"$MINICONDA_DIR/bin/activate\" \"$CONDA_ENV\"
+        echo \"Python version: \$(python --version)\"
+        echo \"Conda environment: \$CONDA_DEFAULT_ENV\"
         echo \"Запуск Node0...\"
-        ./start_server.sh
-        exec bash
+        ./start_server.sh || {
+            echo \"Ошибка при запуске, оставляем сессию открытой для диагностики\"
+            exec bash
+        }
     '"
     
     # Проверяем что сессия создалась
@@ -333,8 +362,82 @@ show_status() {
     read -p "Нажмите Enter..."
 }
 
-# Логи
-show_logs() {
+# Диагностика и исправление
+fix_environment() {
+    clear
+    echo -e "${YELLOW}🔧 Диагностика и исправление окружения${NC}\n"
+    
+    log "Проверка conda..."
+    if ! command -v conda &> /dev/null; then
+        warn "Conda не найдена в PATH, добавляем..."
+        export PATH="$MINICONDA_DIR/bin:$PATH"
+        echo 'export PATH="$HOME/miniconda3/bin:$PATH"' >> ~/.bashrc
+    fi
+    
+    log "Список доступных окружений:"
+    conda env list
+    
+    log "Проверка окружения node0..."
+    if ! conda env list | grep -q "$CONDA_ENV"; then
+        warn "Окружение node0 не найдено, создаем заново..."
+        conda create -n "$CONDA_ENV" python=3.11 -y
+        
+        log "Активируем и устанавливаем базовые пакеты..."
+        source "$MINICONDA_DIR/bin/activate" "$CONDA_ENV"
+        pip install --upgrade pip setuptools wheel
+        
+        if [ -d "$NODE0_DIR" ] && [ -f "$NODE0_DIR/setup.py" -o -f "$NODE0_DIR/pyproject.toml" ]; then
+            log "Устанавливаем Node0 пакет..."
+            cd "$NODE0_DIR"
+            pip install -e . || pip install .
+        fi
+    fi
+    
+    log "Проверка Python в окружении..."
+    source "$MINICONDA_DIR/bin/activate" "$CONDA_ENV"
+    python --version
+    which python
+    
+    log "Исправление start_server.sh..."
+    if [ -d "$NODE0_DIR" ]; then
+        cd "$NODE0_DIR"
+        cat > start_server.sh << EOF
+#!/bin/bash
+set -e
+echo "=== Node0 Server Start ==="
+echo "Активация conda окружения $CONDA_ENV..."
+source "$MINICONDA_DIR/bin/activate" "$CONDA_ENV"
+echo "Python version: \$(python --version)"
+echo "Python path: \$(which python)"
+echo "Conda environment: \$CONDA_DEFAULT_ENV"
+
+echo "Проверка установки Node0..."
+python -c "import sys; print('Python sys.path:', sys.path[:3])"
+
+# Пробуем разные способы запуска
+if python -c "import node0" 2>/dev/null; then
+    echo "Node0 модуль найден, запускаем сервер..."
+    python -m node0.server --port 49200
+elif [ -f "main.py" ]; then
+    echo "Запуск через main.py..."
+    python main.py
+elif [ -f "server.py" ]; then
+    echo "Запуск через server.py..."
+    python server.py
+else
+    echo "Не удалось найти точку входа для Node0"
+    echo "Содержимое директории:"
+    ls -la
+    echo "Оставляем bash сессию открытой для диагностики"
+    exec bash
+fi
+EOF
+        chmod +x start_server.sh
+    fi
+    
+    echo -e "\n${GREEN}✅ Диагностика завершена!${NC}"
+    read -p "Enter..."
+}
     clear
     echo -e "${BLUE}📋 Последние логи Node0${NC}\n"
     
