@@ -1,5 +1,5 @@
 #!/bin/bash
-# Node0 Pluralis Manager - Minimal
+# Node0 Pluralis Manager - Fixed Version
 # Цвета
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -10,6 +10,8 @@ NC='\033[0m'
 # Пути
 NODE0_DIR="$HOME/node0"
 CONDA_ENV="node0"
+CONDA_HOME="$HOME/miniconda3"
+CONFIG_FILE="$HOME/.node0_config"
 
 # Функции логирования
 log() {
@@ -20,41 +22,109 @@ error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Установка зависимостей по официальному гайду
-install_dependencies() {
-    log "Устанавливаем зависимости..."
-    
-    # Update System Packages
-    sudo apt update && sudo apt upgrade -y
-    
-    # Install General Utilities and Tools
-    sudo apt install screen curl iptables build-essential git wget lz4 jq make gcc nano automake autoconf tmux htop nvme-cli libgbm1 pkg-config libssl-dev libleveldb-dev tar clang bsdmainutils ncdu unzip libleveldb-dev -y
-    
-    # Install Python and pip
-    sudo apt install -y python3-pip
-    sudo apt install pip
-    sudo apt install -y build-essential libssl-dev libffi-dev python3-dev
+warning() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
-# Установка Conda по официальному гайду
+# Проверка и инициализация conda
+init_conda() {
+    if [ -f "$CONDA_HOME/bin/conda" ]; then
+        eval "$($CONDA_HOME/bin/conda shell.bash hook)"
+        return 0
+    fi
+    return 1
+}
+
+# Установка зависимостей
+install_dependencies() {
+    log "Устанавливаем системные зависимости..."
+    
+    # Проверяем есть ли sudo
+    if command -v sudo &> /dev/null; then
+        sudo apt update && sudo apt upgrade -y
+        sudo apt install -y screen curl iptables build-essential git wget lz4 jq make gcc nano \
+            automake autoconf tmux htop nvme-cli libgbm1 pkg-config libssl-dev libleveldb-dev \
+            tar clang bsdmainutils ncdu unzip python3-pip python3-dev
+    else
+        # Без sudo (для некоторых VPS)
+        apt update && apt upgrade -y
+        apt install -y screen curl iptables build-essential git wget lz4 jq make gcc nano \
+            automake autoconf tmux htop nvme-cli libgbm1 pkg-config libssl-dev libleveldb-dev \
+            tar clang bsdmainutils ncdu unzip python3-pip python3-dev
+    fi
+}
+
+# Установка Conda
 install_conda() {
-    log "Устанавливаем Conda..."
+    if [ -f "$CONDA_HOME/bin/conda" ]; then
+        log "Conda уже установлена"
+        return 0
+    fi
+    
+    log "Устанавливаем Miniconda..."
     
     mkdir -p ~/miniconda3
-    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
+    wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
     bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
     rm ~/miniconda3/miniconda.sh
     
-    # Принимаем условия использования conda
-    ~/miniconda3/bin/conda config --set channel_priority strict
-    ~/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
-    ~/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+    # Инициализируем conda
+    "$CONDA_HOME/bin/conda" init bash
     
-    source ~/miniconda3/bin/activate
-    conda init --all
-    
-    # Перезагружаем bashrc
+    log "Conda установлена. Перезагружаем shell..."
     source ~/.bashrc
+}
+
+# Создание правильного скрипта запуска
+create_start_script() {
+    local hf_token="$1"
+    local email="$2"
+    local announce_port="$3"
+    
+    cd "$NODE0_DIR"
+    
+    # Активируем conda для генерации
+    init_conda
+    conda activate "$CONDA_ENV"
+    
+    # Генерируем скрипт
+    if [ -z "$announce_port" ]; then
+        python generate_script.py --host_port 49200 --token "$hf_token" --email "$email" <<< "n"
+    else
+        python generate_script.py --host_port 49200 --announce_port "$announce_port" --token "$hf_token" --email "$email" <<< "n"
+    fi
+    
+    # Создаем wrapper для правильного запуска
+    cat > start_node0_wrapper.sh << 'EOF'
+#!/bin/bash
+set -e
+
+# Инициализация conda
+export PATH="$HOME/miniconda3/bin:$PATH"
+eval "$($HOME/miniconda3/bin/conda shell.bash hook)"
+
+# Активируем окружение
+conda activate node0
+
+# Проверка
+echo "=== Проверка окружения ==="
+echo "Python: $(which python)"
+echo "Version: $(python --version)"
+echo "Conda env: $CONDA_DEFAULT_ENV"
+echo "=========================="
+
+# Запускаем оригинальный скрипт
+./start_server.sh
+EOF
+    
+    chmod +x start_node0_wrapper.sh
+    
+    # Исправляем оригинальный start_server.sh
+    if [ -f "start_server.sh" ]; then
+        sed -i 's/python3\.11/python/g' start_server.sh
+        sed -i 's/python3/python/g' start_server.sh
+        chmod +x start_server.sh
+    fi
 }
 
 # Установка Node0
@@ -62,203 +132,278 @@ install_node0() {
     clear
     echo -e "${YELLOW}🚀 Установка Node0 Pluralis${NC}\n"
     
-    # Проверяем зависимости
-    if ! command -v conda &> /dev/null; then
+    # 1. Проверяем и устанавливаем зависимости
+    if ! command -v git &> /dev/null; then
         install_dependencies
+    fi
+    
+    # 2. Проверяем и устанавливаем Conda
+    if [ ! -f "$CONDA_HOME/bin/conda" ]; then
         install_conda
     fi
     
-    # СНАЧАЛА настраиваем conda правильно
-    log "Настраиваем conda..."
-    export PATH="$HOME/miniconda3/bin:$PATH"
+    # 3. Инициализируем conda для текущей сессии
+    init_conda
     
-    # Инициализируем conda для bash
-    ~/miniconda3/bin/conda init bash
-    source ~/.bashrc
+    # 4. Клонируем репозиторий
+    log "Клонируем официальный репозиторий..."
+    if [ -d "$NODE0_DIR" ]; then
+        warning "Директория $NODE0_DIR уже существует"
+        read -p "Удалить и переустановить? (y/n): " reinstall
+        if [ "$reinstall" = "y" ] || [ "$reinstall" = "Y" ]; then
+            # Сохраняем private.key если есть
+            if [ -f "$NODE0_DIR/private.key" ]; then
+                cp "$NODE0_DIR/private.key" ~/private.key.backup
+                log "private.key сохранен в ~/private.key.backup"
+            fi
+            rm -rf "$NODE0_DIR"
+        else
+            log "Установка отменена"
+            read -p "Enter..."
+            return
+        fi
+    fi
     
-    # ПРИНИМАЕМ Terms of Service СРАЗУ
-    log "Принимаем условия использования conda..."
-    ~/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
-    ~/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
-    ~/miniconda3/bin/conda config --set channel_priority strict
-    
-    # Клонируем ОФИЦИАЛЬНЫЙ репозиторий
-    log "Клонируем официальный репозиторий Pluralis..."
-    [ -d "$NODE0_DIR" ] && rm -rf "$NODE0_DIR"
     git clone https://github.com/PluralisResearch/node0 "$NODE0_DIR"
     cd "$NODE0_DIR"
     
-    # ТЕПЕРЬ создаем окружение с правильным Python
-    log "Создаем conda окружение node0 с Python 3.11..."
-    ~/miniconda3/bin/conda create -n node0 python=3.11 -y --override-channels -c conda-forge
+    # 5. Создаем conda окружение
+    log "Создаем conda окружение с Python 3.11..."
+    conda create -n "$CONDA_ENV" python=3.11 -y
     
-    # Активируем окружение ПРАВИЛЬНО
-    log "Активируем окружение node0..."
-    source ~/miniconda3/bin/activate node0
+    # 6. Активируем окружение
+    conda activate "$CONDA_ENV"
     
-    # Проверяем что Python правильный
-    log "Проверяем Python в окружении..."
-    echo "Python version: $(python --version)"
-    echo "Python path: $(which python)"
+    # 7. Проверяем Python
+    log "Проверка Python..."
+    python_version=$(python --version 2>&1)
+    echo "Python версия: $python_version"
     
-    # Если Python все еще не 3.11 - принудительно ставим
-    if ! python --version | grep -q "3.11"; then
-        log "Принудительно переустанавливаем Python 3.11..."
-        conda install python=3.11 -y --override-channels -c conda-forge
-        echo "Новая версия Python: $(python --version)"
+    if ! echo "$python_version" | grep -q "3.11"; then
+        error "Неправильная версия Python!"
+        conda install python=3.11 -y
     fi
     
-    # ТЕПЕРЬ устанавливаем Node0 в правильном окружении
-    log "Устанавливаем Node0 в активированном окружении..."
+    # 8. Устанавливаем Node0
+    log "Устанавливаем Node0..."
     pip install --upgrade pip
     pip install .
     
-    # Получаем данные от пользователя
-    CONFIG_FILE="$HOME/.node0_config"
+    # 9. Восстанавливаем private.key если был
+    if [ -f ~/private.key.backup ]; then
+        cp ~/private.key.backup "$NODE0_DIR/private.key"
+        log "private.key восстановлен"
+    fi
     
+    # 10. Настройка
     echo -e "\n${BLUE}=== Настройка Node0 ===${NC}"
     
-    # Загружаем сохраненные данные если есть
+    # Загружаем сохраненные данные
     if [ -f "$CONFIG_FILE" ]; then
         source "$CONFIG_FILE"
         echo "Найдены сохраненные данные:"
         echo "Email: ${SAVED_EMAIL:-не задан}"
-        echo "Token: ${SAVED_TOKEN:0:10}... (скрыт)"
+        echo "Token: ${SAVED_TOKEN:0:10}... (скрыт)" 
         echo "Announce port: ${SAVED_ANNOUNCE_PORT:-не задан}"
         echo ""
         read -p "Использовать сохраненные данные? (y/n): " use_saved
+        
         if [ "$use_saved" = "y" ] || [ "$use_saved" = "Y" ]; then
             HF_TOKEN="$SAVED_TOKEN"
             EMAIL_ADDRESS="$SAVED_EMAIL"
             ANNOUNCE_PORT="$SAVED_ANNOUNCE_PORT"
+        else
+            HF_TOKEN=""
+            EMAIL_ADDRESS=""
+            ANNOUNCE_PORT=""
         fi
     fi
     
-    # Если не используем сохраненные или их нет - спрашиваем
+    # Запрашиваем данные если нужно
     if [ -z "$HF_TOKEN" ]; then
+        echo ""
+        echo "Требуется настройка:"
         echo "1. HuggingFace токен: https://huggingface.co/settings/tokens"
-        echo "2. Email адрес"
-        echo "3. Announce port (если Vast - проверьте в панели, иначе Enter)"
+        echo "2. Email адрес для отслеживания в dashboard"
+        echo "3. Announce port (только для Vast, иначе пропустите)"
         echo ""
         
         read -p "HuggingFace токен: " HF_TOKEN
+        while [ -z "$HF_TOKEN" ]; do
+            error "Токен обязателен!"
+            read -p "HuggingFace токен: " HF_TOKEN
+        done
+        
         read -p "Email адрес: " EMAIL_ADDRESS
+        while [ -z "$EMAIL_ADDRESS" ]; do
+            error "Email обязателен!"
+            read -p "Email адрес: " EMAIL_ADDRESS
+        done
+        
         read -p "Announce port (Enter для пропуска): " ANNOUNCE_PORT
         
         # Сохраняем данные
-        echo "SAVED_TOKEN='$HF_TOKEN'" > "$CONFIG_FILE"
-        echo "SAVED_EMAIL='$EMAIL_ADDRESS'" >> "$CONFIG_FILE"
-        echo "SAVED_ANNOUNCE_PORT='$ANNOUNCE_PORT'" >> "$CONFIG_FILE"
-        chmod 600 "$CONFIG_FILE"  # Только для владельца
-        log "Данные сохранены в $CONFIG_FILE"
-    fi
-    
-    # Генерируем start_server.sh
-    log "Генерируем конфигурацию..."
-    if [ -z "$ANNOUNCE_PORT" ]; then
-        python3 generate_script.py --host_port 49200 --token "$HF_TOKEN" --email "$EMAIL_ADDRESS"
-    else
-        python3 generate_script.py --host_port 49200 --announce_port "$ANNOUNCE_PORT" --token "$HF_TOKEN" --email "$EMAIL_ADDRESS"
-    fi
-    
-    # ПРИНУДИТЕЛЬНО ИСПРАВЛЯЕМ start_server.sh
-    log "Исправляем start_server.sh для правильной работы с conda..."
-    if [ -f "start_server.sh" ]; then
-        # Создаем резервную копию
-        cp start_server.sh start_server.sh.backup
-        
-        # Заменяем все упоминания python3.11 на python
-        sed -i 's/python3\.11/python/g' start_server.sh
-        sed -i 's/python3/python/g' start_server.sh
-        
-        # Добавляем активацию conda в начало файла если её нет
-        if ! grep -q "conda activate" start_server.sh; then
-            # Создаем новый start_server.sh с правильной активацией
-            cat > start_server.sh << 'EOF'
-#!/bin/bash
-set -e
-echo "=== Запуск Node0 Pluralis ==="
-export PATH="$HOME/miniconda3/bin:$PATH"
-source ~/miniconda3/bin/activate node0
-echo "Python version: $(python --version)"
-echo "Python path: $(which python)"
-echo "Conda environment: $CONDA_DEFAULT_ENV"
-echo "=== Старт сервера ==="
+        cat > "$CONFIG_FILE" << EOF
+SAVED_TOKEN='$HF_TOKEN'
+SAVED_EMAIL='$EMAIL_ADDRESS'
+SAVED_ANNOUNCE_PORT='$ANNOUNCE_PORT'
 EOF
-            # Добавляем оригинальное содержимое без первых строк активации
-            tail -n +4 start_server.sh.backup >> start_server.sh
-            chmod +x start_server.sh
-        fi
-        
-        log "start_server.sh исправлен"
-    else
-        error "start_server.sh не создан!"
+        chmod 600 "$CONFIG_FILE"
+        log "Конфигурация сохранена"
     fi
     
-    echo -e "\n${GREEN}✅ Node0 установлена!${NC}"
-    read -p "Enter..."
+    # 11. Создаем скрипт запуска
+    log "Генерируем скрипты запуска..."
+    create_start_script "$HF_TOKEN" "$EMAIL_ADDRESS" "$ANNOUNCE_PORT"
+    
+    echo -e "\n${GREEN}✅ Node0 успешно установлена!${NC}"
+    echo -e "${YELLOW}Используйте пункт 2 для запуска${NC}"
+    read -p "Нажмите Enter для продолжения..."
 }
 
-# Запуск в tmux
+# Запуск Node0
 start_node0() {
     clear
     echo -e "${YELLOW}🚀 Запуск Node0${NC}\n"
     
     if [ ! -d "$NODE0_DIR" ]; then
-        error "Node0 не установлена! Установите сначала."
+        error "Node0 не установлена! Сначала выполните установку."
         read -p "Enter..."
         return
     fi
     
     cd "$NODE0_DIR"
     
-    if [ ! -f "start_server.sh" ]; then
-        error "start_server.sh не найден! Переустановите Node0."
+    if [ ! -f "start_node0_wrapper.sh" ] && [ ! -f "start_server.sh" ]; then
+        error "Скрипты запуска не найдены! Переустановите Node0."
         read -p "Enter..."
         return
     fi
     
-    # Убиваем старую tmux сессию и очищаем порты
-    tmux kill-session -t node0 2>/dev/null
-    rm -f /tmp/hivemind* 2>/dev/null
+    # Очистка перед запуском
+    log "Очистка старых процессов..."
+    tmux kill-session -t node0 2>/dev/null || true
+    rm -f /tmp/hivemind* 2>/dev/null || true
+    
+    # Убиваем процессы на порту
     if command -v lsof &> /dev/null; then
-        for i in $(sudo lsof -t -i tcp:49200 2>/dev/null); do 
-            sudo kill -9 $i 2>/dev/null
+        for pid in $(lsof -t -i tcp:49200 2>/dev/null); do
+            kill -9 $pid 2>/dev/null || true
         done
     fi
     
-    log "Запускаем в tmux сессии 'node0'..."
-    tmux new-session -d -s node0 "bash -c '
-        export PATH=\"$HOME/miniconda3/bin:\$PATH\"
-        echo \"=== Инициализация окружения ===\"
-        source ~/miniconda3/bin/activate node0
-        echo \"Python version: \$(python --version)\"
-        echo \"Python path: \$(which python)\"
-        echo \"Conda environment: \$CONDA_DEFAULT_ENV\"
-        echo \"=== Запуск Node0 ===\"
-        cd $NODE0_DIR
-        ./start_server.sh
-    '"
+    # Запускаем в tmux
+    log "Запускаем Node0 в tmux сессии..."
+    
+    # Используем wrapper если есть, иначе оригинальный скрипт
+    if [ -f "start_node0_wrapper.sh" ]; then
+        tmux new-session -d -s node0 "cd $NODE0_DIR && ./start_node0_wrapper.sh"
+    else
+        tmux new-session -d -s node0 "cd $NODE0_DIR && bash -c 'source $CONDA_HOME/bin/activate && conda activate $CONDA_ENV && ./start_server.sh'"
+    fi
     
     sleep 3
-    echo -e "${GREEN}✅ Node0 запущена!${NC}"
-    echo -e "${BLUE}Подключиться: tmux attach -t node0${NC}"
-    echo -e "${BLUE}Выйти: Ctrl+B, затем D${NC}"
-    read -p "Enter..."
+    
+    # Проверяем запустилась ли
+    if tmux has-session -t node0 2>/dev/null; then
+        echo -e "${GREEN}✅ Node0 запущена успешно!${NC}\n"
+        echo -e "${BLUE}Команды управления:${NC}"
+        echo -e "  Подключиться к логам: ${YELLOW}tmux attach -t node0${NC}"
+        echo -e "  Отключиться от логов: ${YELLOW}Ctrl+B, затем D${NC}"
+        echo -e "  Посмотреть логи: ${YELLOW}tail -f $NODE0_DIR/logs/server.log${NC}"
+        echo ""
+        echo -e "${GREEN}Dashboard: https://dashboard.pluralis.ai/${NC}"
+    else
+        error "Не удалось запустить Node0!"
+        echo "Проверьте логи для деталей"
+    fi
+    
+    read -p "Нажмите Enter для продолжения..."
+}
+
+# Остановка Node0
+stop_node0() {
+    log "Останавливаем Node0..."
+    
+    # Останавливаем tmux сессию
+    tmux kill-session -t node0 2>/dev/null || true
+    
+    # Очищаем временные файлы
+    rm -f /tmp/hivemind* 2>/dev/null || true
+    
+    # Убиваем процессы на порту
+    if command -v lsof &> /dev/null; then
+        for pid in $(lsof -t -i tcp:49200 2>/dev/null); do
+            kill -9 $pid 2>/dev/null || true
+        done
+    fi
+    
+    log "Node0 остановлена"
 }
 
 # Подключение к tmux
 connect_tmux() {
+    clear
     if tmux has-session -t node0 2>/dev/null; then
-        echo -e "${BLUE}Подключаемся к tmux сессии node0...${NC}"
-        echo -e "${YELLOW}Для выхода: Ctrl+B, затем D${NC}"
+        echo -e "${BLUE}Подключаемся к Node0...${NC}"
+        echo -e "${YELLOW}Для выхода используйте: Ctrl+B, затем D${NC}"
         sleep 2
         tmux attach -t node0
     else
-        error "Tmux сессия 'node0' не найдена!"
-        echo -e "${YELLOW}Сначала запустите Node0${NC}"
+        error "Node0 не запущена!"
+        echo -e "${YELLOW}Сначала запустите Node0 (пункт 2)${NC}"
         read -p "Enter..."
     fi
+}
+
+# Просмотр логов
+view_logs() {
+    clear
+    echo -e "${BLUE}=== Логи Node0 ===${NC}\n"
+    
+    if [ ! -d "$NODE0_DIR" ]; then
+        error "Node0 не установлена!"
+        read -p "Enter..."
+        return
+    fi
+    
+    echo "1) Последние 50 строк"
+    echo "2) Следить за логами в реальном времени"
+    echo "3) Полный лог"
+    echo "0) Назад"
+    echo ""
+    read -p "Выбор: " log_choice
+    
+    case $log_choice in
+        1)
+            if [ -f "$NODE0_DIR/logs/server.log" ]; then
+                tail -n 50 "$NODE0_DIR/logs/server.log"
+            else
+                echo "Лог-файл не найден"
+            fi
+            read -p "Enter..."
+            ;;
+        2)
+            if [ -f "$NODE0_DIR/logs/server.log" ]; then
+                echo -e "${YELLOW}Для выхода нажмите Ctrl+C${NC}"
+                sleep 2
+                tail -f "$NODE0_DIR/logs/server.log"
+            else
+                echo "Лог-файл не найден"
+                read -p "Enter..."
+            fi
+            ;;
+        3)
+            if [ -f "$NODE0_DIR/logs/server.log" ]; then
+                less "$NODE0_DIR/logs/server.log"
+            else
+                echo "Лог-файл не найден"
+                read -p "Enter..."
+            fi
+            ;;
+        *)
+            ;;
+    esac
 }
 
 # Обновление Node0
@@ -272,78 +417,85 @@ update_node0() {
         return
     fi
     
+    # Останавливаем если работает
+    stop_node0
+    
     cd "$NODE0_DIR"
     
-    log "Останавливаем Node0..."
-    tmux kill-session -t node0 2>/dev/null
-    rm -f /tmp/hivemind* 2>/dev/null
-    if command -v lsof &> /dev/null; then
-        for i in $(sudo lsof -t -i tcp:49200 2>/dev/null); do 
-            sudo kill -9 $i 2>/dev/null
-        done
+    # Сохраняем важные файлы
+    if [ -f "private.key" ]; then
+        cp private.key ~/private.key.backup
+        log "private.key сохранен"
     fi
     
-    log "Обновляем код..."
+    # Обновляем репозиторий
+    log "Обновляем код из репозитория..."
+    git stash 2>/dev/null || true
     git pull
     
-    log "Переустанавливаем пакет..."
-    source ~/miniconda3/bin/activate node0
+    # Активируем окружение и обновляем
+    init_conda
+    conda activate "$CONDA_ENV"
     
-    # Проверяем версию Python
-    if ! python --version | grep -q "3.11"; then
-        log "Принудительно устанавливаем Python 3.11..."
-        conda install python=3.11 -y --override-channels -c conda-forge
+    log "Обновляем пакеты Python..."
+    pip install --upgrade pip
+    pip install --upgrade .
+    
+    # Восстанавливаем private.key
+    if [ -f ~/private.key.backup ]; then
+        cp ~/private.key.backup private.key
     fi
     
-    pip install .
-    
-    # ИСПРАВЛЯЕМ start_server.sh после обновления
-    if [ -f "start_server.sh" ]; then
-        log "Исправляем start_server.sh..."
-        cp start_server.sh start_server.sh.backup
-        sed -i 's/python3\.11/python/g' start_server.sh
-        sed -i 's/python3/python/g' start_server.sh
-        
-        # Проверяем что активация conda есть
-        if ! grep -q "conda activate" start_server.sh; then
-            sed -i '1a source ~/miniconda3/bin/activate node0' start_server.sh
-        fi
+    # Перегенерируем скрипты запуска
+    if [ -f "$CONFIG_FILE" ]; then
+        source "$CONFIG_FILE"
+        create_start_script "$SAVED_TOKEN" "$SAVED_EMAIL" "$SAVED_ANNOUNCE_PORT"
     fi
     
-    echo -e "${GREEN}✅ Node0 обновлена!${NC}"
+    echo -e "${GREEN}✅ Node0 успешно обновлена!${NC}"
     read -p "Enter..."
 }
 
-# Удаление
+# Удаление Node0
 remove_node0() {
     clear
     echo -e "${RED}⚠️  УДАЛЕНИЕ NODE0${NC}\n"
-    echo -e "${YELLOW}Это удалит все файлы Node0${NC}"
-    echo -e "${GREEN}private.key будет сохранен как ~/private.key.backup${NC}"
+    echo -e "${YELLOW}Это действие удалит:${NC}"
+    echo "  - Все файлы Node0"
+    echo "  - Conda окружение"
+    echo "  - Конфигурацию"
+    echo ""
+    echo -e "${GREEN}Будет сохранено:${NC}"
+    echo "  - private.key -> ~/private.key.backup"
     echo ""
     echo -e "${RED}Введите 'YES' для подтверждения:${NC} "
     read confirm
     
     if [ "$confirm" = "YES" ]; then
-        log "Останавливаем процессы..."
-        tmux kill-session -t node0 2>/dev/null
-        rm -f /tmp/hivemind* 2>/dev/null
-        if command -v lsof &> /dev/null; then
-            for i in $(sudo lsof -t -i tcp:49200 2>/dev/null); do 
-                sudo kill -9 $i 2>/dev/null
-            done
-        fi
+        # Останавливаем
+        stop_node0
         
+        # Сохраняем private.key
         if [ -f "$NODE0_DIR/private.key" ]; then
-            log "Сохраняем private.key..."
             cp "$NODE0_DIR/private.key" ~/private.key.backup
+            log "private.key сохранен в ~/private.key.backup"
         fi
         
+        # Удаляем директорию
         log "Удаляем файлы..."
         rm -rf "$NODE0_DIR"
         
-        log "Удаляем conda окружение..."
-        conda remove -n node0 --all -y 2>/dev/null
+        # Удаляем conda окружение
+        if init_conda; then
+            log "Удаляем conda окружение..."
+            conda remove -n "$CONDA_ENV" --all -y 2>/dev/null || true
+        fi
+        
+        # Спрашиваем про конфигурацию
+        read -p "Удалить сохраненную конфигурацию? (y/n): " del_config
+        if [ "$del_config" = "y" ] || [ "$del_config" = "Y" ]; then
+            rm -f "$CONFIG_FILE"
+        fi
         
         echo -e "${GREEN}✅ Node0 удалена${NC}"
     else
@@ -352,45 +504,98 @@ remove_node0() {
     read -p "Enter..."
 }
 
+# Проверка статуса
+check_status() {
+    echo -e "${BLUE}=== Статус системы ===${NC}\n"
+    
+    # Node0 установлена?
+    if [ -d "$NODE0_DIR" ]; then
+        echo -e "Node0: ${GREEN}Установлена${NC}"
+        
+        # Проверяем private.key
+        if [ -f "$NODE0_DIR/private.key" ]; then
+            echo -e "Private key: ${GREEN}Найден${NC}"
+        else
+            echo -e "Private key: ${YELLOW}Отсутствует${NC}"
+        fi
+    else
+        echo -e "Node0: ${RED}Не установлена${NC}"
+    fi
+    
+    # Conda
+    if [ -f "$CONDA_HOME/bin/conda" ]; then
+        echo -e "Conda: ${GREEN}Установлена${NC}"
+        
+        # Проверяем окружение
+        if init_conda && conda env list | grep -q "$CONDA_ENV"; then
+            echo -e "Окружение $CONDA_ENV: ${GREEN}Создано${NC}"
+        else
+            echo -e "Окружение $CONDA_ENV: ${RED}Не найдено${NC}"
+        fi
+    else
+        echo -e "Conda: ${RED}Не установлена${NC}"
+    fi
+    
+    # Tmux сессия
+    if tmux has-session -t node0 2>/dev/null; then
+        echo -e "Процесс: ${GREEN}🟢 Работает${NC}"
+    else
+        echo -e "Процесс: ${RED}🔴 Остановлен${NC}"
+    fi
+    
+    # Конфигурация
+    if [ -f "$CONFIG_FILE" ]; then
+        echo -e "Конфигурация: ${GREEN}Сохранена${NC}"
+    else
+        echo -e "Конфигурация: ${YELLOW}Не найдена${NC}"
+    fi
+    
+    echo ""
+}
+
 # Главное меню
 while true; do
     clear
-    echo -e "${BLUE}╔═══════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║       NODE0 PLURALIS MANAGER      ║${NC}"
-    echo -e "${BLUE}╚═══════════════════════════════════╝${NC}\n"
+    echo -e "${BLUE}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║       NODE0 PLURALIS MANAGER v2       ║${NC}"
+    echo -e "${BLUE}╚═══════════════════════════════════════╝${NC}\n"
     
-    # Статус
-    if tmux has-session -t node0 2>/dev/null; then
-        echo -e "Статус: ${GREEN}🟢 Работает${NC}"
-    else
-        echo -e "Статус: ${RED}🔴 Остановлена${NC}"
-    fi
+    check_status
     
-    if [ -d "$NODE0_DIR" ]; then
-        echo -e "Установка: ${GREEN}✅ Готова${NC}\n"
-    else
-        echo -e "Установка: ${RED}❌ Требуется${NC}\n"
-    fi
-    
-    echo "1) Установить"
-    echo "2) Запустить"
-    echo "3) Подключиться"
-    echo "4) Обновить"
-    echo "5) Удалить"
-    echo "0) Выход"
+    echo -e "${YELLOW}Основные действия:${NC}"
+    echo "  1) 📦 Установить Node0"
+    echo "  2) ▶️  Запустить Node0"
+    echo "  3) 📺 Подключиться к консоли"
+    echo "  4) 📄 Просмотр логов"
+    echo ""
+    echo -e "${BLUE}Управление:${NC}"
+    echo "  5) 🔄 Обновить Node0"
+    echo "  6) ⏹️  Остановить Node0"
+    echo "  7) 🗑️  Удалить Node0"
+    echo ""
+    echo "  0) Выход"
     echo ""
     
-    read -p "Выбор: " choice
+    read -p "Выберите действие: " choice
     
     case $choice in
         1) install_node0 ;;
         2) start_node0 ;;
         3) connect_tmux ;;
-        4) update_node0 ;;
-        5) remove_node0 ;;
-        0) exit 0 ;;
+        4) view_logs ;;
+        5) update_node0 ;;
+        6) 
+            stop_node0
+            echo -e "${GREEN}Node0 остановлена${NC}"
+            read -p "Enter..."
+            ;;
+        7) remove_node0 ;;
+        0) 
+            echo -e "${GREEN}До свидания!${NC}"
+            exit 0 
+            ;;
         *) 
-            error "Неверный выбор"
+            error "Неверный выбор!"
             sleep 1
             ;;
     esac
