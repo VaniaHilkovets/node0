@@ -45,6 +45,11 @@ install_conda() {
     bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
     rm ~/miniconda3/miniconda.sh
     
+    # Принимаем условия использования conda
+    ~/miniconda3/bin/conda config --set channel_priority strict
+    ~/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+    ~/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+    
     source ~/miniconda3/bin/activate
     conda init --all
     
@@ -63,8 +68,13 @@ install_node0() {
         install_conda
     fi
     
-    # Убеждаемся что conda доступна
+    # Убеждаемся что conda доступна и принимаем условия
     export PATH="$HOME/miniconda3/bin:$PATH"
+    
+    # Принимаем Terms of Service если нужно
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main 2>/dev/null || true
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
+    
     source ~/.bashrc
     
     # Клонируем ОФИЦИАЛЬНЫЙ репозиторий
@@ -73,21 +83,33 @@ install_node0() {
     git clone https://github.com/PluralisResearch/node0 "$NODE0_DIR"
     cd "$NODE0_DIR"
     
-    # Создаем conda environment
-    log "Создаем conda окружение node0..."
-    conda create -n node0 python=3.11 -y
+    # Создаем conda environment с ПРАВИЛЬНОЙ версией Python
+    log "Создаем conda окружение node0 с Python 3.11..."
+    conda create -n node0 python=3.11 -y --override-channels -c conda-forge
+    
+    # ПРИНУДИТЕЛЬНО инициализируем conda для bash
+    conda init bash
+    source ~/.bashrc
     
     # Активируем conda environment
     log "Активируем окружение node0..."
-    conda activate node0
+    source ~/miniconda3/bin/activate node0
+    
+    # Проверяем версию Python
+    echo "Текущая версия Python: $(python --version)"
+    
+    # Если все еще не 3.11 - принудительно ставим
+    if ! python --version | grep -q "3.11"; then
+        log "Принудительно устанавливаем Python 3.11..."
+        conda install python=3.11 -y --override-channels -c conda-forge
+    fi
     
     # Устанавливаем Node0
     log "Устанавливаем Node0..."
     pip install .
     
-    # ПРИНУДИТЕЛЬНО устанавливаем нужный Python
-    log "Принудительно устанавливаем Python 3.11..."
-    conda install python=3.11 -y
+    # Проверяем что Python правильный
+    log "Финальная проверка Python..."
     python --version
     
     # Получаем данные от пользователя
@@ -255,10 +277,13 @@ update_node0() {
     git pull
     
     log "Переустанавливаем пакет..."
-    conda activate node0
+    source ~/miniconda3/bin/activate node0
     
-    # ПРИНУДИТЕЛЬНО устанавливаем правильный Python
-    conda install python=3.11 -y
+    # Проверяем версию Python
+    if ! python --version | grep -q "3.11"; then
+        log "Принудительно устанавливаем Python 3.11..."
+        conda install python=3.11 -y --override-channels -c conda-forge
+    fi
     
     pip install .
     
