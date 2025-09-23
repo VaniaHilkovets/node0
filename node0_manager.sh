@@ -85,6 +85,11 @@ install_node0() {
     log "Устанавливаем Node0..."
     pip install .
     
+    # ПРИНУДИТЕЛЬНО устанавливаем нужный Python
+    log "Принудительно устанавливаем Python 3.11..."
+    conda install python=3.11 -y
+    python --version
+    
     # Получаем данные от пользователя
     CONFIG_FILE="$HOME/.node0_config"
     
@@ -133,6 +138,37 @@ install_node0() {
         python3 generate_script.py --host_port 49200 --announce_port "$ANNOUNCE_PORT" --token "$HF_TOKEN" --email "$EMAIL_ADDRESS"
     fi
     
+    # ПРИНУДИТЕЛЬНО ИСПРАВЛЯЕМ start_server.sh
+    log "Исправляем start_server.sh для правильной работы с conda..."
+    if [ -f "start_server.sh" ]; then
+        # Создаем резервную копию
+        cp start_server.sh start_server.sh.backup
+        
+        # Заменяем все упоминания python3.11 на python
+        sed -i 's/python3\.11/python/g' start_server.sh
+        sed -i 's/python3/python/g' start_server.sh
+        
+        # Добавляем активацию conda в начало файла если её нет
+        if ! grep -q "conda activate" start_server.sh; then
+            # Создаем новый start_server.sh с правильной активацией
+            cat > start_server.sh << 'EOF'
+#!/bin/bash
+set -e
+echo "=== Запуск Node0 Pluralis ==="
+source ~/miniconda3/bin/activate node0
+echo "Python version: $(python --version)"
+echo "Python path: $(which python)"
+EOF
+            # Добавляем оригинальное содержимое без первых строк активации
+            tail -n +4 start_server.sh.backup >> start_server.sh
+            chmod +x start_server.sh
+        fi
+        
+        log "start_server.sh исправлен"
+    else
+        error "start_server.sh не создан!"
+    fi
+    
     echo -e "\n${GREEN}✅ Node0 установлена!${NC}"
     read -p "Enter..."
 }
@@ -179,6 +215,20 @@ start_node0() {
     read -p "Enter..."
 }
 
+# Подключение к tmux
+connect_tmux() {
+    if tmux has-session -t node0 2>/dev/null; then
+        echo -e "${BLUE}Подключаемся к tmux сессии node0...${NC}"
+        echo -e "${YELLOW}Для выхода: Ctrl+B, затем D${NC}"
+        sleep 2
+        tmux attach -t node0
+    else
+        error "Tmux сессия 'node0' не найдена!"
+        echo -e "${YELLOW}Сначала запустите Node0${NC}"
+        read -p "Enter..."
+    fi
+}
+
 # Обновление Node0
 update_node0() {
     clear
@@ -206,7 +256,24 @@ update_node0() {
     
     log "Переустанавливаем пакет..."
     conda activate node0
+    
+    # ПРИНУДИТЕЛЬНО устанавливаем правильный Python
+    conda install python=3.11 -y
+    
     pip install .
+    
+    # ИСПРАВЛЯЕМ start_server.sh после обновления
+    if [ -f "start_server.sh" ]; then
+        log "Исправляем start_server.sh..."
+        cp start_server.sh start_server.sh.backup
+        sed -i 's/python3\.11/python/g' start_server.sh
+        sed -i 's/python3/python/g' start_server.sh
+        
+        # Проверяем что активация conda есть
+        if ! grep -q "conda activate" start_server.sh; then
+            sed -i '1a source ~/miniconda3/bin/activate node0' start_server.sh
+        fi
+    fi
     
     echo -e "${GREEN}✅ Node0 обновлена!${NC}"
     read -p "Enter..."
@@ -272,8 +339,9 @@ while true; do
     
     echo "1) Установить"
     echo "2) Запустить"
-    echo "3) Обновить"
-    echo "4) Удалить"
+    echo "3) Подключиться"
+    echo "4) Обновить"
+    echo "5) Удалить"
     echo "0) Выход"
     echo ""
     
@@ -282,8 +350,9 @@ while true; do
     case $choice in
         1) install_node0 ;;
         2) start_node0 ;;
-        3) update_node0 ;;
-        4) remove_node0 ;;
+        3) connect_tmux ;;
+        4) update_node0 ;;
+        5) remove_node0 ;;
         0) exit 0 ;;
         *) 
             error "Неверный выбор"
