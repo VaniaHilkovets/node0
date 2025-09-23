@@ -68,14 +68,19 @@ install_node0() {
         install_conda
     fi
     
-    # Убеждаемся что conda доступна и принимаем условия
+    # СНАЧАЛА настраиваем conda правильно
+    log "Настраиваем conda..."
     export PATH="$HOME/miniconda3/bin:$PATH"
     
-    # Принимаем Terms of Service если нужно
-    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main 2>/dev/null || true
-    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
-    
+    # Инициализируем conda для bash
+    ~/miniconda3/bin/conda init bash
     source ~/.bashrc
+    
+    # ПРИНИМАЕМ Terms of Service СРАЗУ
+    log "Принимаем условия использования conda..."
+    ~/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+    ~/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+    ~/miniconda3/bin/conda config --set channel_priority strict
     
     # Клонируем ОФИЦИАЛЬНЫЙ репозиторий
     log "Клонируем официальный репозиторий Pluralis..."
@@ -83,34 +88,30 @@ install_node0() {
     git clone https://github.com/PluralisResearch/node0 "$NODE0_DIR"
     cd "$NODE0_DIR"
     
-    # Создаем conda environment с ПРАВИЛЬНОЙ версией Python
+    # ТЕПЕРЬ создаем окружение с правильным Python
     log "Создаем conda окружение node0 с Python 3.11..."
-    conda create -n node0 python=3.11 -y --override-channels -c conda-forge
+    ~/miniconda3/bin/conda create -n node0 python=3.11 -y --override-channels -c conda-forge
     
-    # ПРИНУДИТЕЛЬНО инициализируем conda для bash
-    conda init bash
-    source ~/.bashrc
-    
-    # Активируем conda environment
+    # Активируем окружение ПРАВИЛЬНО
     log "Активируем окружение node0..."
     source ~/miniconda3/bin/activate node0
     
-    # Проверяем версию Python
-    echo "Текущая версия Python: $(python --version)"
+    # Проверяем что Python правильный
+    log "Проверяем Python в окружении..."
+    echo "Python version: $(python --version)"
+    echo "Python path: $(which python)"
     
-    # Если все еще не 3.11 - принудительно ставим
+    # Если Python все еще не 3.11 - принудительно ставим
     if ! python --version | grep -q "3.11"; then
-        log "Принудительно устанавливаем Python 3.11..."
+        log "Принудительно переустанавливаем Python 3.11..."
         conda install python=3.11 -y --override-channels -c conda-forge
+        echo "Новая версия Python: $(python --version)"
     fi
     
-    # Устанавливаем Node0
-    log "Устанавливаем Node0..."
+    # ТЕПЕРЬ устанавливаем Node0 в правильном окружении
+    log "Устанавливаем Node0 в активированном окружении..."
+    pip install --upgrade pip
     pip install .
-    
-    # Проверяем что Python правильный
-    log "Финальная проверка Python..."
-    python --version
     
     # Получаем данные от пользователя
     CONFIG_FILE="$HOME/.node0_config"
@@ -225,8 +226,14 @@ start_node0() {
     
     log "Запускаем в tmux сессии 'node0'..."
     tmux new-session -d -s node0 "bash -c '
+        export PATH=\"$HOME/miniconda3/bin:\$PATH\"
+        echo \"=== Инициализация окружения ===\"
+        source ~/miniconda3/bin/activate node0
+        echo \"Python version: \$(python --version)\"
+        echo \"Python path: \$(which python)\"
+        echo \"Conda environment: \$CONDA_DEFAULT_ENV\"
+        echo \"=== Запуск Node0 ===\"
         cd $NODE0_DIR
-        conda activate node0
         ./start_server.sh
     '"
     
